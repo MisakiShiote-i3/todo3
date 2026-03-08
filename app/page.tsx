@@ -3,14 +3,20 @@
 //
 // "use client" を書かないので Next.js はこれをサーバーで実行するにゃ。
 // サーバーコンポーネントは HTML を事前生成できるので SEO やパフォーマンスに優れるにゃ。
-// ただし localStorage や useState が使えないので、
-// それらが必要な TodoApp コンポーネントを分離して "use client" にしたにゃ。
 //
-// つまり「ページ全体はサーバー」「インタラクティブな部分だけクライアント」
-// という最小コストな構成にゃ。
+// なぜサーバーコンポーネントが TodoProvider（クライアント）をラップできるか：
+//   Next.js App Router では、サーバーコンポーネントは
+//   クライアントコンポーネントを children として渡せるにゃ。
+//   クライアント境界は TodoProvider から始まり、
+//   その配下が全てクライアント側で動くにゃ。
 // ============================================================
+import { TodoProvider } from "./context/TodoContext";
 import TodoApp from "./components/TodoApp";
 
 export default function Home() {
-  return <TodoApp />;
+  return (
+    <TodoProvider>
+      <TodoApp />
+    </TodoProvider>
+  );
 }

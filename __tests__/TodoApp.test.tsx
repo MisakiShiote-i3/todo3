@@ -1,6 +1,14 @@
 // ============================================================
 // TodoApp コンポーネントのテストにゃ
 //
+// リファクタリング後の変更点にゃ：
+//   Before: <TodoApp /> を直接 render していたにゃ
+//   After : <TodoProvider><TodoApp /></TodoProvider> でラップするにゃ
+//
+//   理由：ビジネスロジック（Supabase 呼び出し）が TodoProvider に移ったにゃ。
+//   TodoApp だけ render しても useTodo() が Context を見つけられずエラーになるにゃ。
+//   Provider を通すことで、モックされた Supabase を使った統合テストになるにゃ。
+//
 // テストの構成にゃ：
 //   1. ローディング状態のテスト
 //   2. Todo一覧表示のテスト
@@ -11,10 +19,10 @@
 //   7. エラー表示のテスト
 // ============================================================
 
-import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { TodoProvider } from "../app/context/TodoContext";
 import TodoApp from "../app/components/TodoApp";
 
 // ============================================================
@@ -63,6 +71,21 @@ const sampleTodos: Todo[] = [
     created_at: "2024-01-02T00:00:00.000Z",
   },
 ];
+
+// ============================================================
+// テスト用ヘルパーにゃ
+//
+// なぜ renderWithProvider を作るか：
+//   全テストで <TodoProvider><TodoApp /></TodoProvider> を書くのは冗長にゃ。
+//   1 か所にまとめると、将来 Provider に props が増えても修正箇所が 1 か所になるにゃ。
+// ============================================================
+function renderWithProvider() {
+  return render(
+    <TodoProvider>
+      <TodoApp />
+    </TodoProvider>
+  );
+}
 
 // ============================================================
 // モック設定ヘルパー関数にゃ
@@ -174,7 +197,7 @@ describe("TodoApp", () => {
         delete: vi.fn(),
       });
 
-      render(<TodoApp />);
+      renderWithProvider();
 
       // render は同期的なので、async の fetch が完了する前の状態を確認できるにゃ
       expect(screen.getByText("読み込み中にゃ…")).toBeInTheDocument();
@@ -187,7 +210,7 @@ describe("TodoApp", () => {
   describe("Todo一覧表示", () => {
     it("フェッチ完了後にTodoタイトルが表示される", async () => {
       setupFetchMock(sampleTodos);
-      render(<TodoApp />);
+      renderWithProvider();
 
       // なぜ waitFor を使うか：
       //   fetchTodos() は非同期（async/await）で実行されるにゃ。
@@ -201,7 +224,7 @@ describe("TodoApp", () => {
 
     it("Todoが0件のとき空の状態メッセージが表示される", async () => {
       setupFetchMock([]);
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(
@@ -213,7 +236,7 @@ describe("TodoApp", () => {
     it("フッターに未完了数と合計数が表示される", async () => {
       // sampleTodos は未完了1件・完了1件 → 未完了: 1 / 全体: 2
       setupFetchMock(sampleTodos);
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(screen.getByText(/未完了: 1/)).toBeInTheDocument();
@@ -223,7 +246,7 @@ describe("TodoApp", () => {
 
     it("日付が「登録:」というラベル付きで表示される", async () => {
       setupFetchMock([sampleTodos[0]]);
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         // formatDate 関数の出力を直接テストするのではなく、
@@ -240,7 +263,7 @@ describe("TodoApp", () => {
   describe("フィルター機能", () => {
     it("デフォルトでは「すべて」フィルターが適用されてTodo全件が表示される", async () => {
       setupFetchMock(sampleTodos);
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(screen.getByText("テストタスク1")).toBeInTheDocument();
@@ -250,7 +273,7 @@ describe("TodoApp", () => {
 
     it("「未完了」フィルターで未完了のTodoのみ表示される", async () => {
       setupFetchMock(sampleTodos);
-      render(<TodoApp />);
+      renderWithProvider();
 
       // フェッチ完了を待つにゃ
       await waitFor(() => {
@@ -258,7 +281,7 @@ describe("TodoApp", () => {
       });
 
       // なぜ fireEvent.click を使うか：
-      //   フィルターボタンのクリックは同期的な状態更新（setFilter）のみにゃ。
+      //   フィルターボタンのクリックは同期的な状態更新（dispatch）のみにゃ。
       //   ネットワークは使わないので userEvent の async は不要にゃ。
       fireEvent.click(screen.getByText("未完了"));
 
@@ -270,7 +293,7 @@ describe("TodoApp", () => {
 
     it("「完了済み」フィルターで完了済みのTodoのみ表示される", async () => {
       setupFetchMock(sampleTodos);
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(screen.getByText("テストタスク2")).toBeInTheDocument();
@@ -285,7 +308,7 @@ describe("TodoApp", () => {
 
     it("フィルター切り替え後に「すべて」に戻ると全件表示される", async () => {
       setupFetchMock(sampleTodos);
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(screen.getByText("テストタスク1")).toBeInTheDocument();
@@ -321,7 +344,7 @@ describe("TodoApp", () => {
       // 2回目の from() 呼び出し：insert
       setupInsertMock(newTodo);
 
-      render(<TodoApp />);
+      renderWithProvider();
 
       // ローディング完了を待つにゃ
       await waitFor(() => {
@@ -342,7 +365,7 @@ describe("TodoApp", () => {
     it("空文字のままフォーム送信してもTodoが追加されない", async () => {
       const user = userEvent.setup();
       setupFetchMock([]);
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(screen.queryByText("読み込み中にゃ…")).not.toBeInTheDocument();
@@ -366,7 +389,7 @@ describe("TodoApp", () => {
 
       setupFetchMock([]);
       setupInsertMock(newTodo);
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(screen.queryByText("読み込み中にゃ…")).not.toBeInTheDocument();
@@ -377,7 +400,7 @@ describe("TodoApp", () => {
       await user.click(screen.getByRole("button", { name: "追加" }));
 
       // なぜ submit 後すぐ input が空になるか：
-      //   addTodo() の中で setInputValue("") は await より前（同期部分）にゃ。
+      //   addTodo() の中で dispatch(SET_INPUT_VALUE, "") は await より前（同期部分）にゃ。
       //   そのため、非同期処理の完了を待たずとも空になっているにゃ。
       await waitFor(() => {
         expect(input).toHaveValue("");
@@ -389,7 +412,7 @@ describe("TodoApp", () => {
 
       setupFetchMock([]);
       setupInsertMock(null, new Error("DB error"));
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(screen.queryByText("読み込み中にゃ…")).not.toBeInTheDocument();
@@ -421,7 +444,7 @@ describe("TodoApp", () => {
       // toggleTodo の update 呼び出しにゃ（成功ケース）
       setupToggleMock();
 
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(screen.getByText("テストタスク1")).toBeInTheDocument();
@@ -442,7 +465,7 @@ describe("TodoApp", () => {
       setupFetchMock([sampleTodos[0]]);
       setupToggleMock(new Error("Update failed"));
 
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(screen.getByText("テストタスク1")).toBeInTheDocument();
@@ -468,7 +491,7 @@ describe("TodoApp", () => {
       setupFetchMock([sampleTodos[0]]);
       setupDeleteMock(); // エラーなし（成功ケース）
 
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(screen.getByText("テストタスク1")).toBeInTheDocument();
@@ -492,7 +515,7 @@ describe("TodoApp", () => {
       // 3回目の from() 呼び出し：失敗後の再フェッチ（復元にゃ）
       setupFetchMock([sampleTodos[0]]);
 
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(screen.getByText("テストタスク1")).toBeInTheDocument();
@@ -514,7 +537,7 @@ describe("TodoApp", () => {
   describe("エラー表示", () => {
     it("初期フェッチに失敗するとエラーメッセージが表示される", async () => {
       setupFetchMock([], new Error("Network error"));
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(
@@ -525,7 +548,7 @@ describe("TodoApp", () => {
 
     it("エラーメッセージをクリックすると非表示になる", async () => {
       setupFetchMock([], new Error("Network error"));
-      render(<TodoApp />);
+      renderWithProvider();
 
       await waitFor(() => {
         expect(
@@ -534,8 +557,8 @@ describe("TodoApp", () => {
       });
 
       // なぜクリックでエラーが消えるか：
-      //   コンポーネントの onClick={() => setError(null)} により
-      //   クリックすると error ステートが null になるにゃ。
+      //   コンポーネントの onClick={clearError} により
+      //   クリックすると dispatch(SET_ERROR, null) が実行されるにゃ。
       fireEvent.click(screen.getByText(/データの取得に失敗したにゃ/));
 
       expect(

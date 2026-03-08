@@ -1,25 +1,24 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
-
 // ============================================================
-// 型定義
+// TodoApp.tsx（UI 専用コンポーネントにゃ）
 //
-// Supabase のテーブル定義と合わせた型にゃ。
-// id が string（UUID）で created_at が string（ISO文字列）にゃ。
+// リファクタリング前との違いにゃ：
+//   Before: useState・useEffect・Supabase 呼び出しが全てここにあったにゃ
+//   After : useTodo() を呼ぶだけで、「何を表示するか」と「何をするか」だけを書くにゃ
+//
+// このコンポーネントは「表示と操作の受け付け」だけに集中できるにゃ。
+// ビジネスロジックは TodoContext.tsx に移したにゃ。
 // ============================================================
-type Todo = {
-  id: string;
-  title: string;
-  completed: boolean;
-  created_at: string;
-};
 
-type Filter = "all" | "active" | "completed";
+import { useTodo } from "@/app/context/TodoContext";
+import type { Filter } from "@/app/context/TodoContext";
 
 // ============================================================
-// 日時フォーマット
+// 日時フォーマット（UI 用のユーティリティにゃ）
+//
+// 表示専用の関数なので TodoApp.tsx に置くにゃ。
+// Context はデータの形式（ISO 文字列）を知らなくていいにゃ。
 // ============================================================
 function formatDate(isoString: string): string {
   return new Date(isoString).toLocaleString("ja-JP", {
@@ -31,148 +30,27 @@ function formatDate(isoString: string): string {
   });
 }
 
-// ============================================================
-// TodoApp コンポーネント（Supabase版）
-//
-// localStorage版との主な違いにゃ：
-//   1. DB操作が非同期（async/await）になるにゃ
-//      → ネットワーク越しにデータをやり取りするので待ち時間が発生するにゃ
-//   2. ローディング状態（isLoading）が必要になるにゃ
-//      → DBからデータが返ってくるまで空リストを表示しないためにゃ
-//   3. エラー状態（error）を扱う必要があるにゃ
-//      → ネットワークエラーやDB制約違反などが起きうるにゃ
-//   4. データの永続化がサーバー側になるにゃ
-//      → どのデバイス・ブラウザからも同じデータが見えるにゃ
-// ============================================================
 export default function TodoApp() {
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const [filter, setFilter] = useState<Filter>("all");
-  const [inputValue, setInputValue] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
   // ============================================================
-  // 初期データ取得
+  // useTodo() でコンテキストから全ての状態と操作を取得するにゃ
   //
-  // なぜ useEffect で fetch するか：
-  //   コンポーネントがマウントされた後（ブラウザで表示された後）に
-  //   Supabase へリクエストを送るにゃ。
-  //   サーバーサイドレンダリング時には実行されないにゃ。
-  //
-  // なぜ created_at で昇順ソートするか：
-  //   古いものが上に来る方が自然なTodoリストの順序にゃ。
+  // なぜ 1 行で全部取れるか：
+  //   TodoProvider が state・filteredTodos・操作関数をまとめて
+  //   Context に渡しているためにゃ。
+  //   このコンポーネントは Supabase を知らなくていいにゃ。
   // ============================================================
-  useEffect(() => {
-    async function fetchTodos() {
-      const { data, error } = await supabase
-        .from("todos")
-        .select("*")
-        .order("created_at", { ascending: true });
+  const {
+    state: { todos, filter, inputValue, isLoading, error },
+    filteredTodos,
+    activeCount,
+    addTodo,
+    toggleTodo,
+    deleteTodo,
+    setFilter,
+    setInputValue,
+    clearError,
+  } = useTodo();
 
-      if (error) {
-        setError("データの取得に失敗したにゃ 😿");
-      } else {
-        setTodos(data ?? []);
-      }
-      setIsLoading(false);
-    }
-
-    fetchTodos();
-  }, []);
-
-  // フィルタリング（ローカル計算にゃ）
-  const filteredTodos = todos.filter((todo) => {
-    if (filter === "active") return !todo.completed;
-    if (filter === "completed") return todo.completed;
-    return true;
-  });
-
-  const activeCount = todos.filter((t) => !t.completed).length;
-
-  // ============================================================
-  // [Create] 新しい todo を追加するにゃ
-  //
-  // なぜ select().single() を付けるか：
-  //   INSERT した後に DB が生成した id と created_at を受け取るためにゃ。
-  //   これがないと追加した行のデータを再取得する必要が出てくるにゃ。
-  // ============================================================
-  async function addTodo(e: { preventDefault(): void }) {
-    e.preventDefault();
-    const title = inputValue.trim();
-    if (!title) return;
-
-    setInputValue("");
-
-    const { data, error } = await supabase
-      .from("todos")
-      .insert({ title, completed: false })
-      .select()
-      .single();
-
-    if (error) {
-      setError("追加に失敗したにゃ 😿");
-      return;
-    }
-
-    // DB が返した行（id・created_at 付き）を state に追加するにゃ
-    setTodos((prev) => [...prev, data]);
-  }
-
-  // ============================================================
-  // [Update] 完了状態をトグルするにゃ
-  //
-  // なぜ楽観的更新（Optimistic Update）を使うか：
-  //   DB のレスポンスを待ってから UI を更新すると
-  //   クリックが反映されるまで遅延を感じるにゃ。
-  //   先に UI を更新し、失敗したら元に戻すことで
-  //   即座に反応するアプリになるにゃ。
-  // ============================================================
-  async function toggleTodo(id: string) {
-    const todo = todos.find((t) => t.id === id);
-    if (!todo) return;
-
-    const newCompleted = !todo.completed;
-
-    // 先に UI を更新（楽観的更新にゃ）
-    setTodos((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, completed: newCompleted } : t))
-    );
-
-    const { error } = await supabase
-      .from("todos")
-      .update({ completed: newCompleted })
-      .eq("id", id);
-
-    if (error) {
-      // 失敗したら元に戻すにゃ
-      setTodos((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, completed: !newCompleted } : t))
-      );
-      setError("更新に失敗したにゃ 😿");
-    }
-  }
-
-  // ============================================================
-  // [Delete] todo を削除するにゃ（楽観的更新）
-  // ============================================================
-  async function deleteTodo(id: string) {
-    // 先に UI から削除にゃ
-    setTodos((prev) => prev.filter((t) => t.id !== id));
-
-    const { error } = await supabase.from("todos").delete().eq("id", id);
-
-    if (error) {
-      // 失敗したら元に戻すにゃ（再取得で復元）
-      const { data } = await supabase
-        .from("todos")
-        .select("*")
-        .order("created_at", { ascending: true });
-      setTodos(data ?? []);
-      setError("削除に失敗したにゃ 😿");
-    }
-  }
-
-  // ローディング中にゃ
   if (isLoading) {
     return (
       <div className="container">
@@ -190,7 +68,7 @@ export default function TodoApp() {
       {error && (
         <p
           style={{ color: "#e74c3c", textAlign: "center", marginBottom: 16 }}
-          onClick={() => setError(null)}
+          onClick={clearError}
         >
           {error}（クリックで閉じるにゃ）
         </p>
